@@ -325,6 +325,19 @@ Code/
                                      pi_camera/ = Arducam shots taken on the Orange Pi + counted_* model runs)
 ```
 
+**GitHub:** https://github.com/rounak-evan/Image_detection-Bottles-
+(**public** — user's decision, 2026-10-08). The repo root is
+`C:\ML_Project` (Git + GitHub CLI installed on the home PC 2026-10-08,
+logged in as `rounak-evan`; commits use `rounak-evan
+<rounakpaul901@gmail.com>`, same as the laptop's). `.gitignore` excludes
+all `.jpg/.jpeg` photos, `Code/tests/outputs/`, `Code/venv/`,
+`Orange_pi_OS/` and `Code/weights/` — labels, trained weights, the RKNN
+model, code and docs are tracked. (8 older test-output photos uploaded
+from the laptop on 2026-09-29 were deliberately left in the repo.) To
+upload new work: `git add -A`, `git commit -m "..."`, `git push` from
+`C:\ML_Project`. The laptop has its own copy — pull before editing there
+(`git pull`) to avoid conflicting versions.
+
 Outside `Code/`: `C:\ML_Project\Orange_pi_OS\` holds the flashed OS image
 (`Orangepi3b_1.0.8_ubuntu_jammy_desktop_xfce_linux5.10.160.img` + `.sha`,
 checksum verified). On the Pi itself, test captures live in
