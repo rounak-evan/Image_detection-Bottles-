@@ -7,6 +7,19 @@ on CPU only (very slow: potentially several hours for this dataset).
 **Read `ClaudeContext/Projectsummary.md` first** for full project context —
 this file only covers the GPU/training environment setup itself.
 
+**Status (2026-10-03): this setup works.** Training ran successfully on the
+9070 XT with Python 3.12.10, torch 2.9.1+rocm7.2.1, Ultralytics 8.4.171 —
+the full run took ~2.3 minutes. One extra fix was needed beyond the steps
+below: see "MIOpen crash during training" at the end.
+
+The venv lives at `Code/venv/` — run scripts with
+`.\venv\Scripts\python.exe <script>` from the `Code/` folder.
+
+**Known hiccup (2026-10-06):** Windows **Smart App Control** sometimes
+blocks one ROCm library (`rocrand.dll`) with "An Application Control
+policy has blocked this file". Retrying usually works — see
+`ClaudeContext/ChallengesLog.md` #22.
+
 ## Why this is more involved than a normal `pip install torch`
 
 NVIDIA GPUs use CUDA, which PyTorch supports out of the box via a simple
@@ -118,7 +131,29 @@ python train.py
 
 Watch the first few lines of output — Ultralytics prints which device
 it's training on. Confirm it says something GPU-related, not `cpu`,
-before letting it run for a while.
+before letting it run for a while. (On the working setup it prints
+`CUDA:0 (AMD Radeon RX 9070 XT, 16304MiB)`.)
+
+Results land in `models/runs/bottle_detector/` — the trained model is
+`weights/best.pt`. Re-running `train.py` overwrites that same folder.
+To keep a copy of the console output, run
+`python train.py > train_log.txt` instead.
+
+## MIOpen crash during training (hit and fixed 2026-10-03)
+
+Even with step 5 passing, training crashed with
+`miopenStatusUnknownError`. MIOpen is AMD's optimized neural-network
+library, and it has a bug on this card with this ROCm release. **Already
+fixed in `train.py`** with this line near the top:
+
+```python
+torch.backends.cudnn.enabled = False
+```
+
+On ROCm, PyTorch's "cudnn" switch controls MIOpen, so this turns MIOpen
+off and PyTorch uses its own GPU code instead — still on the GPU, still
+fast. Any *other* script that trains on this PC (or runs heavy GPU work
+and hits the same error) needs the same line.
 
 ## Known issue to be aware of
 

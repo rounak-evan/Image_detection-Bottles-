@@ -9,11 +9,25 @@
   this batch, `data/dataset/import_new/`, is now redundant and can be
   deleted.
 
-**Full dataset (55 photos) is fully labeled and ready for `train.py`.**
+**Full dataset (55 photos) is fully labeled, and the model has been
+trained on it (2026-10-03)** — see `ClaudeContext/Projectsummary.md`,
+"First training run". (`data/dataset/import_new/` was still on disk as of
+that date.)
 Keeping this doc for reference in case a future batch 3 needs the same
 process — the steps below describe the general workflow (originally
 written for batch 1, with batch 2 callouts added where the process
 differed).
+
+**Batch 3 (planned): real crate photos from the Arducam** — taken with
+the camera resting steady over a crate (on the Orange Pi, or on the laptop
+with `capture_photos.py`). For this batch, draft labels should come from
+the trained model (`best.pt`), not the circle detector — they'll be much
+closer to correct, so the makesense.ai pass becomes mostly checking.
+
+**Ground-truth rule (user decision, 2026-10-03):** the labels exported
+from makesense.ai are the final verdict on true counts — the user
+double-checks every photo before exporting. If the model and a label
+disagree, it's recorded as a model error.
 
 `prepare_dataset.py` already wrote a *draft* bounding box around every
 bottle cap it could find, using the same circle detector from
@@ -120,4 +134,6 @@ existing split, so nothing needs to be moved by hand.
 ## 7. Train
 
 Once the corrected labels are back in place, run `train.py` to fine-tune
-the model.
+the model (on the home PC — see `GPU_TRAINING_SETUP.md`). Note: retraining
+overwrites `models/runs/bottle_detector/`, so copy the current
+`weights/best.pt` somewhere safe first if you want to compare old vs. new.

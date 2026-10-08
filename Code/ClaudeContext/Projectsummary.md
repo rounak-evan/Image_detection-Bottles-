@@ -9,10 +9,32 @@ OpenCV, or ML terminology; briefly explain new concepts as they come up.
 
 ## Project overview
 
-A device built on the Orange Pi 3B that uses a camera and a pretrained ML
-model to detect and count bottles in view, displaying the live count on a
-touchscreen. Includes audio feedback ("captured") when a photo is taken.
-Location: Chennai, India (relevant for hardware sourcing).
+A device built on the Orange Pi 3B that uses a camera and a custom-trained
+ML model to detect and count bottles in a crate (seen from above),
+displaying the count on a touchscreen. Includes audio feedback
+("captured") when a photo is taken. Location: Chennai, India (relevant
+for hardware sourcing).
+
+## Where things stand (end of day 2026-10-06) — read this first
+
+- **Model:** custom YOLOv8n trained on 55 labeled phone photos
+  (`models/runs/bottle_detector/weights/best.pt`). Counts all 11 val photos
+  exactly with `imgsz=1280, conf=0.5, iou=0.4, max_det=1000`. Not yet
+  tested on real crate photos from the Arducam.
+- **Orange Pi 3B:** running Ubuntu 22.04 (Orange Pi 1.0.8, kernel 5.10),
+  **boots from the eMMC alone** (since 2026-10-07 — keep the old SD card
+  out), IP 192.168.1.115, SSH key login from this PC, NPU driver RKNPU
+  v0.9.6 present.
+- **Capture-and-count program:** `pi/bottle_counter.py` on the Pi
+  (`~/bottle/`) — photo → crop → NPU → count, exact on all val photos.
+- **Camera on the Pi:** works at full 3264x2448; manual focus 150 is
+  sharpest at test height.
+- **Model on the Pi's NPU (2026-10-07):** `best_fp16.rknn` counts all 11
+  val photos exactly, ~0.64 s per photo. INT8 version is broken (counts 0)
+  — fixable later for speed, not needed now.
+- **Next:** real crate photos from the Arducam, then the Pi
+  capture-and-count script. Full list: "Immediate next steps" at the bottom.
+- Details of today's boot problem and fix: `ChallengesLog.md` #20.
 
 ## Hardware — finalized
 
@@ -28,7 +50,8 @@ Location: Chennai, India (relevant for hardware sourcing).
   hardware test" section below for full results: confirmed working via
   OpenCV, default capture resolution (640×480) is far below its real
   capability, actual working ceiling ~2592×1944 through OpenCV's UVC video
-  path.
+  path **on Windows**. **On the Orange Pi (Linux, 2026-10-06) it offers the
+  full 3264×2448 at 15 fps (MJPG)** — see "Orange Pi 3B bring-up".
 - **Touchscreen** — three separate connections:
   1. HDMI (video in) from Orange Pi to the driver board.
   2. Power — separate DC input to the driver board, confirmed 5V. Driver
@@ -39,6 +62,15 @@ Location: Chennai, India (relevant for hardware sourcing).
   3. Touch (USB) — DG101565A08 (~10.1" capacitive, ILI2511 controller,
      4-pin FPC VCC/D-/D+/GND, standard USB pinout, 3.3V logic, 10mA).
      Uses the generic `hid-multitouch` Linux driver — no custom driver work.
+  **Re-checked against both datasheets (2026-10-08, screen ordered):**
+  HDMI does **not** power the display — HDMI's +5V line is only meant for
+  ~55 mA (EDID/identification), far too little for a 10.1" backlight. The
+  HC10MST needs its own **5V supply on its micro-USB socket** (datasheet
+  gives no current; plan **5V 2A**). The touch panel's 4-pin FPC is USB
+  wiring (VCC, D-, D+, GND) but its controller is 3.3V (drawing says 2.8V)
+  — connect it through the USB adapter it ships with, not straight to a
+  5V USB port. Powering the display from a Pi USB port is possible but not
+  recommended (the Pi's 5V/3A supply already feeds Pi + camera + touch).
 - **Power architecture** — two independent supplies:
   - 5V/3A USB-C → Orange Pi 3B (also powers camera and touch controller,
     both USB bus-powered).
@@ -52,21 +84,27 @@ Location: Chennai, India (relevant for hardware sourcing).
   still open whether it's actually needed (e.g. voice-triggered capture).
   Not yet sourced.
 - **Storage**: Orange Pi eMMC module, or Class 10/A2 microSD as a cheaper
-  starting point.
+  starting point. **Currently (2026-10-06):** SanDisk 64GB SD card + USB
+  pen drive (temporary); eMMC module removed and kept — target long-term
+  boot device.
 - **Cooling**: passive heatsink recommended for sustained camera + NPU load.
 
 ## Software approach
 
-- **Detection strategy**: Pretrained YOLOv8n (via `ultralytics`), trained on
-  COCO — "bottle" is already class ID 39, so zero custom training needed.
-  Detection (not classification) chosen because counting requires separating
-  individual object instances.
+- **Detection strategy**: ~~Pretrained YOLOv8n (via `ultralytics`), trained on
+  COCO — "bottle" is already class ID 39, so zero custom training needed.~~
+  **Superseded** — the COCO model can't see bottles from above (see "MAJOR
+  PIVOT"). **Current detector: a custom fine-tuned YOLOv8n,
+  `models/runs/bottle_detector/weights/best.pt`, trained 2026-10-03** (see
+  "First training run" below). Detection (not classification) chosen because
+  counting requires separating individual object instances.
 - **Dev environment**: Windows + VS Code, Python extension installed.
   Packages: `opencv-python`, `ultralytics`.
-- **RKNN conversion (for later)**: Needed to run the model on the Orange Pi's
+- **RKNN conversion (next step)**: Needed to run the model on the Orange Pi's
   NPU. RKNN-Toolkit2 only officially supports Ubuntu 18.04/20.04/22.04, not
   the user's native Ubuntu 26.x. Plan: Docker (Rockchip's official image) or
-  WSL2 with Ubuntu 22.04. Deferred until core detection logic is proven.
+  WSL2 with Ubuntu 22.04 on the home PC. Core detection logic is now proven
+  (count check), and the Pi's NPU driver is confirmed (RKNPU v0.9.6).
 - **UI framework**: PySide6 (better touch support than Kivy, clean OpenCV
   frame integration via QImage/QPixmap). Audio "captured" cue planned via
   `QSoundEffect` (QtMultimedia), playing a pre-recorded `.wav`, not live TTS.
@@ -74,8 +112,11 @@ Location: Chennai, India (relevant for hardware sourcing).
 ## Project workflow (6 phases)
 
 1. Hardware bring-up — assemble parts, flash OS (needs hardware)
+   — **done** (booted 2026-10-06; running from the eMMC since 2026-10-07)
 2. Peripheral checks — camera, display, touch, audio (needs hardware)
+   — **camera done**; audio, display, touch pending
 3. Model prep — convert to RKNN format (RKNN step needs hardware; rest doesn't)
+   — **done 2026-10-07**: FP16 RKNN model exact on the NPU (~0.65 s/photo)
 4. Core application — capture, inference, counting loop (no hardware needed)
 5. UI integration — PySide6 touchscreen app (no hardware needed)
 6. Test & deploy — tune performance, package as autostart kiosk app (needs hardware)
@@ -88,9 +129,12 @@ Location: Chennai, India (relevant for hardware sourcing).
    test image (real bottle photos not yet provided at time of writing)
 4. Filter detections and count — done, logic verified (correctly excluded a
    low-confidence, edge-of-frame detection from the count)
-5. Tune against real photos — **not yet done**, waiting on real bottle photos
+5. Tune against real photos — done differently than planned: real photos
+   showed the pretrained model doesn't work, so a custom model was labeled
+   and trained instead (see "MAJOR PIVOT" and "First training run" below)
 6. Package into one reusable function — done, see `imagedetcode.py`
-   (now superseded by `circle_counter.py` — see "MAJOR PIVOT" below)
+   (now superseded by `circle_counter.py`, and that in turn by the trained
+   model — a counting function wrapping `best.pt` is **not yet written**)
 7. Build the UI shell (PySide6, placeholder data) — not yet done
 8. Wire the UI to the real detection function — not yet done
 
@@ -135,7 +179,7 @@ other:
   needed" assumption from the original plan no longer holds for the
   top-down crate scenario.
 
-### Custom training pipeline (built; dataset now finished, training not yet run)
+### Custom training pipeline (built, dataset finished, first training run done 2026-10-03)
 
 - `prepare_dataset.py` — auto-generates a *draft* YOLO-format labeled
   dataset (now at `data/dataset/` post-reorg, see "Folder structure" below)
@@ -149,9 +193,12 @@ other:
   LabelImg as originally planned).
 - `train.py` — fine-tunes `models/yolov8n.pt` on the corrected dataset
   (`imgsz=1280` because caps are small relative to full crate photos,
-  `epochs=100` with early-stop `patience=20`). **Not yet run** — see
-  "Training hardware plan" below (moving to a GPU machine before running
-  this).
+  `epochs=100` with early-stop `patience=20`). **Run successfully on the
+  home PC's GPU on 2026-10-03** — see "First training run" below. Two
+  changes were made to it along the way: MIOpen is disabled
+  (`torch.backends.cudnn.enabled = False`) to avoid an AMD GPU crash, and
+  the output folder is now an absolute path with `exist_ok=True` so
+  results land in `models/runs/bottle_detector/` every time.
 - `tests/batch_test.py` — calls `circle_counter.py`'s
   `count_bottles_topdown()` instead of the old YOLO-based `count_bottles()`
   from `imagedetcode.py`, since the latter is confirmed non-functional for
@@ -241,7 +288,17 @@ Code/
 ├── circle_counter.py     (working classical CV detector, Hough Circle Transform)
 ├── prepare_dataset.py    (builds a dataset from scratch — DO NOT re-run now, would wipe corrected labels)
 ├── add_new_photos.py     (adds a new photo batch to the existing dataset WITHOUT touching corrected labels)
+├── capture_photos.py     (laptop: live Arducam preview, SPACE saves a full-res 2592x1944 photo)
+├── ORANGE_PI_SETUP.md    (Orange Pi 3B bring-up: OS image, flashing, first boot, NPU check, SSH, peripherals)
+├── LAPTOP_QUICKSTART.md  (using the project on the laptop to take Arducam crate photos)
+├── pi/
+│   ├── bottle_counter.py   (runs ON THE PI: photo → crop → NPU model → count; the engine the touchscreen app will call)
+│   └── install_to_emmc.sh  (runs ON THE PI with sudo: copies the running system onto the eMMC — ERASES the eMMC)
+├── tools/
+│   ├── fix_gpt_entry_pointer.ps1   (Windows, admin: repairs the GPT header bug that blocked first boot — ChallengesLog #20)
+│   └── pen_drive_lba1_before_fix.bin (backup of the pen drive's original header sector, for undo)
 ├── train.py              (fine-tunes YOLOv8n on the labeled dataset)
+├── train_log.txt         (full console output of the 2026-10-03 training run)
 ├── LABELING_INSTRUCTIONS.md
 ├── GPU_TRAINING_SETUP.md (home-PC ROCm/PyTorch setup for the AMD 9070 XT)
 ├── ClaudeContext/
@@ -250,14 +307,28 @@ Code/
 ├── data/
 │   ├── Bottle Images (Upright)/   (batch 1: 16 raw source photos)
 │   ├── Bottle Images (new)/       (batch 2: 39 raw source photos)
+│   ├── Bottle Images (arducam)/   (batch 3, planned: real field photos from the production camera, via capture_photos.py)
 │   └── dataset/                    (YOLO-format training data: images/{train,val}/, labels/{train,val}/, data.yaml, labels.txt — 55 photos total, fully labeled)
 ├── models/
-│   └── yolov8n.pt                  (pretrained base weights; trained weights will land in models/runs/ once train.py is run)
+│   ├── yolov8n.pt                  (pretrained base weights — the starting point for training)
+│   ├── rknn/                       (NPU model for the Pi: best_fp16.rknn + convert.py + npu_count.py — see "Model on the NPU")
+│   └── runs/bottle_detector/       (output of train.py: weights/best.pt = the trained model, weights/last.pt,
+│                                    results.csv per-epoch metrics, plots, val_batch*_pred.jpg previews)
+├── weights/
+│   └── yolo26n.pt                  (auto-downloaded by Ultralytics during training, most likely for its
+│                                    AMP self-check — not used by any of our scripts)
 └── tests/
     ├── camera_test.py              (hardware check script)
     ├── batch_test.py               (runs circle_counter.py across a whole folder of photos)
-    └── outputs/                    (all test-generated images: result_circles.jpg, which_camera_*.jpg, batch_results/)
+    ├── check_model.py              (trained model's count vs. true label count, per photo — see "Count check")
+    └── outputs/                    (all test-generated images: result_circles.jpg, which_camera_*.jpg, batch_results/, model_check/,
+                                     pi_camera/ = Arducam shots taken on the Orange Pi + counted_* model runs)
 ```
+
+Outside `Code/`: `C:\ML_Project\Orange_pi_OS\` holds the flashed OS image
+(`Orangepi3b_1.0.8_ubuntu_jammy_desktop_xfce_linux5.10.160.img` + `.sha`,
+checksum verified). On the Pi itself, test captures live in
+`/home/orangepi/camtest/`.
 
 **Path changes to remember**: scripts now reference `models/yolov8n.pt`
 (not `yolov8n.pt`), `data/dataset/...` (not `dataset/...`), and
@@ -275,7 +346,10 @@ limitation; content already merged into `data/dataset/labels/`), and the
 LabelImg-era `classes.txt` files (unused since the switch to makesense.ai).
 (A similar staging folder, `data/dataset/import_new/`, was used the same
 way for batch 2 — see "Second photo batch" section below — and can be
-deleted too now that batch 2 labeling is complete and merged.)
+deleted too now that batch 2 labeling is complete and merged. **Still
+present on disk as of 2026-10-03.**) The `data/dataset/labels/*.cache`
+files are created automatically by Ultralytics when training scans the
+labels — harmless, and regenerated if deleted.
 
 ## Original script: imagedetcode.py (SUPERSEDED — kept for reference only)
 
@@ -317,8 +391,8 @@ Key implementation notes (as originally written):
    results land in `tests/outputs/batch_results/`.
 
 This all runs on the Windows laptop, not the Orange Pi — hardware isn't in
-the loop yet at this stage. (The actual training run (`train.py`) is
-planned for the home PC instead — see "Training hardware plan" below.)
+the loop yet at this stage. (Training (`train.py`) runs on the home PC
+instead — see "Training hardware plan" and "First training run" below.)
 
 ## Training hardware plan: moving to a home PC with a GPU (2026-09-23)
 
@@ -351,8 +425,10 @@ and GPU-detection verification steps to run before trusting it.
 use relative paths only, so this works unchanged in any location), opens a
 separate Claude Code session there, points it at `GPU_TRAINING_SETUP.md`
 for the environment setup and this file for full project context, then
-runs `train.py` there instead of on this laptop. `train.py` itself hasn't
-been run yet as of this writing.
+runs `train.py` there instead of on this laptop. **Done — this plan worked;
+see "First training run" below.** The setup needed one extra fix not in the
+original guide (the MIOpen crash), now added to `GPU_TRAINING_SETUP.md`.
+Actual training time: ~2.3 minutes, far below the 10-30 minute estimate.
 
 ## Second photo batch + operational decision (2026-09-25)
 
@@ -394,26 +470,253 @@ staff physically keep bottles upright when handling them for this device
 the project working sooner. Revisit tilted-bottle handling later if
 needed; not a current priority.
 
-## Immediate next steps
+## First training run (2026-10-03, home PC GPU)
 
-1. **Blocking step**: run `train.py` on the home PC (see "Training
-   hardware plan" above) using the full 55-photo dataset — all labels are
-   now corrected and complete (both batches).
-2. Once trained, check the resulting model
-   (`models/runs/bottle_detector/weights/best.pt`) against the 11 held-out
-   val photos before trusting it.
-3. Tilted-bottle robustness is deliberately deprioritized (see "Second
-   photo batch" note above) — handled via process (staff keep bottles
-   upright), not training data, for now.
-4. Physically confirm/adjust the production camera mount to be as close to
-   directly overhead as the enclosure allows (see "MAJOR PIVOT" note above).
-5. When writing any future capture code (UI integration, Orange Pi loop),
-   remember the two camera gotchas from the hardware test: discard warm-up
-   frames before use, and explicitly set resolution to 2592×1944 (don't
-   rely on the 640×480 default).
-6. Build the PySide6 UI shell (step 7) — this can happen in parallel, it
-   doesn't depend on the detection method being finalized.
-7. Wire the (now custom-trained) detection function into the UI (step 8).
-8. Decide the trigger condition for the "captured" audio cue (manual button
-   vs. count stabilizing over consecutive frames).
-9. Resolve the open microphone question (needed or not).
+`train.py` was run on the home PC (Ultralytics 8.4.171, Python 3.12.10,
+torch 2.9.1+rocm7.2.1, AMD Radeon RX 9070 XT) on the full 55-photo dataset
+(44 train / 11 val). Full console output saved in `train_log.txt`.
+
+**Problems hit and fixed along the way** (details in `ChallengesLog.md`
+#15-#16):
+- Training crashed with `miopenStatusUnknownError` (AMD's MIOpen library).
+  Fixed by turning MIOpen off (`torch.backends.cudnn.enabled = False` at
+  the top of `train.py`) — training still runs on the GPU.
+- Ultralytics saved results to the wrong place
+  (`runs/detect/models/runs/bottle_detector-2/`). Results were moved to
+  `models/runs/bottle_detector/`, the stray `runs/` folder deleted, and
+  `train.py` fixed to use an absolute output path + `exist_ok=True`.
+  (Note: `models/runs/bottle_detector/args.yaml` still records the old
+  `bottle_detector-2` name/path — it's just a record of that run's
+  settings, not something any script reads, so this is harmless.)
+
+**Result**:
+- Early stopping kicked in at epoch 77 (no improvement for 20 epochs);
+  **best epoch was 57**, saved as `weights/best.pt` (6.3 MB). Total
+  training time **~2.3 minutes** (0.038 hours).
+- Final validation of `best.pt` on the 11 val photos (1,297 bottles):
+  **precision 0.999, recall 0.998, mAP50 0.995, mAP50-95 0.699**.
+  In plain terms: almost every bottle was found (recall) and almost
+  nothing that wasn't a bottle got flagged (precision). mAP50-95 is lower
+  because it also grades how *tightly* each box fits the cap — that matters
+  less for counting, which only needs one box per bottle.
+- Inference speed on the 9070 XT: ~6.7 ms per image (will be much slower
+  on the Orange Pi — real speed only known after RKNN conversion).
+
+**Caveats — don't fully trust these numbers yet:**
+1. **`max_det` cap**: Ultralytics warned that some photos contain up to
+   **337 bottles**, but by default it reports at most **300 detections per
+   image** (`max_det=300`). On the densest crates the model *cannot*
+   report more than 300, so it would undercount, and the val metrics above
+   may be slightly optimistic. Any inference/counting code must pass a
+   higher limit (e.g. `max_det=500`), and validation should be re-run with
+   that setting.
+2. **Small val set**: 11 photos, several of which are the same physical
+   crate photographed multiple times (see the matching-count notes
+   above) — the val photos are likely very similar to some training
+   photos, so these scores probably overstate how well it handles a
+   genuinely new crate/lighting setup.
+3. ~~Not yet checked as counts~~ — **done, see "Count check" below.**
+   Still not tested on real-camera (Arducam) images — only phone photos.
+
+### Count check (2026-10-03) — `tests/check_model.py`
+
+New script: runs `best.pt` on the labeled photos and prints, per photo,
+true count (lines in the label file) vs. model count, and saves annotated
+images to `tests/outputs/model_check/`. Run from `Code/` with the venv:
+`python tests/check_model.py` (val) or `python tests/check_model.py train`.
+
+- **With Ultralytics' default settings it overcounted badly** (val: 167
+  extra, IMG_4732 +63) — the model drew duplicate, slightly larger,
+  low-confidence boxes around caps that already had a box. Fixed with
+  settings alone, no retraining (details: `ChallengesLog.md` #18).
+- **Production inference settings (use these everywhere — UI, Orange Pi
+  loop, RKNN tests):** `imgsz=1280, conf=0.5, iou=0.4, max_det=1000`.
+- **Results with those settings:**
+  - Val (11 photos, never trained on): **1297/1297 — every photo exact.**
+  - Train (44 photos): 4972 bottles, 22 off (0.44%), 40/44 exact.
+    Remaining errors:
+    - IMG_4818 (+14), IMG_4819 (+6): real bottles *outside* the crate
+      (cardboard box / neighbouring crate at the photo edge) — the model
+      counts any visible bottle. Production must frame or crop to the
+      crate only (`ChallengesLog.md` #19).
+    - IMG_4823, IMG_4824 (−1 each): the model counted 21 vs. 22 labeled —
+      a small model undercount. Labels re-checked and confirmed correct by
+      the user in makesense.ai (2026-10-03). (For reference only: the one
+      unmatched label in each file is a zero-height entry —
+      `0 0.677778 0.582353 0.003486 0.000000` /
+      `0 0.670806 0.670588 0.003486 0.000000`.)
+
+**Ground-truth rule (user decision, 2026-10-03):** the makesense.ai labels
+are the final verdict on true counts — the user double-checks every
+photo before exporting. When the model and a label disagree, treat it as
+a model error; never "correct" or second-guess a label file.
+
+## Orange Pi 3B bring-up (2026-10-06)
+
+Bring-up guide: `ORANGE_PI_SETUP.md` (official Orange Pi Ubuntu 22.04
+desktop image, vendor kernel 5.10 for the NPU driver; NPU driver check;
+SSH so Claude can run commands from the PC; then camera → speaker → custom
+LCD → touch, one at a time).
+
+**Status: BOOTED, reachable over SSH, NPU driver present, camera working.**
+First boot was blocked for most of the day by a corrupted GPT header
+(partition-entry pointer rewritten from LBA 2 to 2016 on the Pi's first
+boot — full story in `ChallengesLog.md` #20; the SD cards were never
+faulty).
+
+   **Current setup:**
+   - **Boot: eMMC only (since 2026-10-07).** The running system was copied
+     onto the 58.3 GB eMMC module with `pi/install_to_emmc.sh` (does what
+     Orange Pi's menu-driven `nand-sata-install` does: fresh GPT sized to
+     the whole eMMC, bootloader `idbloader.img` @ sector 64 + `u-boot.itb` @
+     16384, FAT `/boot` + ext4 `/` with **new UUIDs** — root
+     `2317443f-005a-4f77-849e-626c2f68b6e5`, boot `F446-73EF` — rsync of the
+     live system, fstab + `orangepiEnv.txt` rootdev updated). Verified: GPT
+     entry pointer 2 and backup at the last LBA (so the #20 bug can't
+     trigger), boots with no SD/USB, NPU driver OK, `bottle_counter.py`
+     still exact. The previous project's OS on the eMMC was erased (user
+     approved).
+   - The old SanDisk SD card still holds the previous two-device system
+     (root UUID `fbf3a91f-…`). **Keep the SD card out of the Pi** — the
+     eMMC bootloader may look at the SD card first and try to boot that old
+     system. The USB pen drive was wiped on 2026-10-07 (one exFAT
+     partition, label `ML_PROJECT`) and now carries a full copy of
+     `C:\ML_Project` for working on the laptop.
+   - Board SPI flash (16 MB) is **erased** — it held the previous project's
+     custom U-Boot.
+   - Pi IP: **192.168.1.115** (DHCP — may change after router restarts).
+     SSH key from this PC is installed: `ssh orangepi@192.168.1.115` works
+     without a password. Password is still the default `orangepi` (change
+     it before the device leaves the bench).
+   - Verified: kernel 5.10.160-rockchip-rk356x, Orange Pi 1.0.8 Jammy,
+     3.8 GB RAM, **NPU driver `RKNPU v0.9.6` present**, idle temp ~58 °C.
+   - Ubuntu 24.04 upgrade prompt disabled (`Prompt=never` in
+     `/etc/update-manager/release-upgrades`) — RKNN needs 22.04.
+   - **Arducam on the Pi works** (USB ID `0c45:6366` "Microdia Webcam
+     Vitade AF", `/dev/video0`). Unlike on Windows (capped at 2592x1944),
+     Linux offers the **full 3264x2448 (8 MP) at 15 fps in MJPG**.
+     OpenCV 4.5.4 installed (`apt install python3-opencv`); verified
+     `cv2.VideoCapture(0, cv2.CAP_V4L2)` + MJPG + 3264x2448 returns real
+     frames (~0.15 s per frame read after warm-up). First test shots
+     (`tests/outputs/pi_camera/`) looked slightly hazy — check for a
+     protective film on the lens / autofocus settling before judging.
+     Open question: capture at 3264x2448 or 2592x1944 — decide once real
+     crate shots are compared (model runs at imgsz=1280 either way).
+   - **Focus:** camera ships with autofocus off (`focus_auto=0`); manual
+     `focus_absolute` 1-1023, lower = farther. With the camera resting
+     steady (not hand-held — hand-held sweeps are too noisy to use), a
+     sweep peaked clearly at **focus 150** (Laplacian sharpness ~330 vs
+     <50 at 200+). Autofocus picked a worse value (144, softer). Plan: lock
+     manual focus in the capture code, re-sweep once at the final mount
+     height.
+   - **First model run on Pi-camera photos (2026-10-06,
+     `tests/outputs/pi_camera/counted_crate_*.jpg`)** — scene had no crate
+     (suitcase, box with a printed photo, a water bottle). Model found 2-3
+     boxes: the water bottle's cap (correct, 0.68) plus 1-2 false positives
+     on small pale/dark spots in the printed photo (0.79, 0.54). Expected
+     — the model only ever saw caps in blue crates. Reinforces the plan to
+     crop each frame to the crate region. Real accuracy test still needs
+     Arducam shots of actual crates.
+   - PC note: Windows **Smart App Control** (on) intermittently blocks
+     `_rocm_sdk_libraries_custom\bin\rocrand.dll` ("An Application Control
+     policy has blocked this file") — retrying worked.
+   PC network: `192.168.1.0/24`, router `192.168.1.1`, PC `192.168.1.135`
+   (wired). No LCD yet — HDMI to a monitor for now.
+
+**Not yet checked on the Pi:** speaker/audio, custom LCD, touch panel,
+Wi-Fi.
+
+## Model on the NPU (2026-10-07)
+
+Done on the Pi itself ("route B" — no WSL2 on the PC; WSL/Docker aren't
+installed there). Steps and results:
+
+1. **PC:** `best.pt` → `best.onnx` (Ultralytics export, `imgsz=1280`,
+   `opset=12`, `simplify=True`; output shape `(1, 5, 33600)` = cx, cy, w,
+   h, score per candidate box).
+2. **Pi:** venv `~/rknn-venv` with `rknn-toolkit2==2.3.2` +
+   `rknn-toolkit-lite2==2.3.2` (torch 2.2.0, onnx 1.16.1, numpy 1.26.4,
+   opencv-python-headless). **Gotcha:** the toolkit pins
+   `onnxoptimizer==0.3.8`, which has no aarch64 wheel (pip tries to build
+   it and fails on missing cmake). Installed the toolkit with `--no-deps`
+   plus all other deps by hand — conversion works without onnxoptimizer.
+3. **Pi runtime updated:** `/usr/lib/librknnrt.so` 1.4.0 (2022) → **2.3.2**
+   (from the airockchip/rknn-toolkit2 GitHub repo, v2.3.2 tag); old file
+   kept as `/usr/lib/librknnrt.so.1.4.0.bak`.
+4. **Conversion** (`~/bottle/convert.py`, copy in `models/rknn/`):
+   `target_platform='rk3566'`, `mean 0 / std 255`, calibration on 30 train
+   photos. Took ~6.5 min on the Pi. Printed many
+   `REGTASK: bit width of field value exceeds the limit, target: lite`
+   errors — turned out harmless for FP16.
+5. **Count check on the real NPU** (`~/bottle/npu_count.py`, letterbox to
+   1280 like Ultralytics, `conf=0.5, iou=0.4`):
+   - **FP16 (`best_fp16.rknn`, 9.1 MB): 1297/1297 — all 11 val photos
+     exact, ~0.64 s per photo on the NPU.** ✅ This is the working model
+     (copy at `models/rknn/best_fp16.rknn`; on the Pi in `~/bottle/`).
+   - INT8 (`best_int8.rknn`): counts **0** on every photo (~0.23 s). Cause:
+     the single `(5, 33600)` output mixes box coordinates (0-1280) and
+     scores (0-1) on one INT8 scale, so every score rounds to 0. Fix if
+     ever needed (≈3× faster): export with boxes and scores as separate
+     outputs (Rockchip model-zoo style YOLOv8 export), then re-quantize.
+     Not needed now — 0.64 s is fine for capture-then-count.
+
+Timing above is NPU inference only (letterbox + NMS on the CPU add a
+little; capture adds ~0.15 s).
+
+## Capture-and-count program (2026-10-07) — `pi/bottle_counter.py`
+
+The device's "engine" (no screen of its own — the touchscreen app will
+call it). Lives in the repo at `Code/pi/bottle_counter.py`, deployed on
+the Pi at `~/bottle/bottle_counter.py` next to `best_fp16.rknn`. Run with
+the venv: `~/rknn-venv/bin/python bottle_counter.py` (camera) or
+`... --image photo.jpg` (existing photos); saves the photo + a
+`_counted.jpg` copy with boxes and "Bottles: N" to `~/bottle/captures/`.
+
+What it does: opens the camera once (MJPG, 3264x2448, focus locked at
+150, 3 s warm-up), takes a photo, crops to the crate (`CROP` setting —
+currently the whole photo; set it once the mount is fixed), letterboxes to
+1280, runs the FP16 model on the NPU, filters with `conf=0.5, iou=0.4`,
+maps boxes back to the full photo. For the app: `BottleCounter()` once,
+then `count_from_camera()` → `CountResult(count, boxes, photo, annotated,
+seconds)`.
+
+Tested: all 11 val photos exact (~0.65 s each incl. pre/post-processing),
+boxes land correctly on the caps; live camera run works (scene had no
+crate → 0).
+
+## Immediate next steps (as of end of day 2026-10-06)
+
+Done so far, for reference: model trained (2026-10-03) and count-checked
+(val 1297/1297 exact with `conf=0.5, iou=0.4, max_det=1000`); Orange Pi
+booted with NPU driver; Arducam captures 8 MP photos on the Pi with focus
+locked at 150.
+
+**Suggested order for the next session:**
+
+1. ~~Convert the model for the NPU~~ — **done 2026-10-07**, FP16 version
+   counts all val photos exactly at ~0.64 s (see "Model on the NPU").
+2. ~~Run it on the Pi~~ — done (same section). Optional later: fix INT8
+   for ~3× speed.
+3. **Real crate photos from the Arducam** — camera resting steady over an
+   actual crate at roughly the final mount height; re-run the focus sweep
+   there, capture a batch, label in makesense.ai, and count-check. This is
+   the phone→Arducam accuracy test; if counts are off, add these photos to
+   the dataset (`add_new_photos.py`, or draft labels from `best.pt`) and
+   retrain (~2-3 min on the 9070 XT).
+4. ~~Write the Pi capture-and-count script~~ — **done 2026-10-07**,
+   `pi/bottle_counter.py` (see "Capture-and-count program"). Still to set:
+   the `CROP` region, once the mount is fixed.
+5. **Exclude bottles outside the crate** — fixed crop region and/or camera
+   framing (ChallengesLog #19).
+6. ~~Move the Pi's system onto the eMMC~~ — **done 2026-10-07**, boots
+   from the eMMC alone. Still to do: **change the default password**
+   (`orangepi`), and optionally wipe the old SD card / pen drive.
+7. Remaining peripherals: speaker, then custom LCD + touch when they arrive.
+8. PySide6 UI shell, then wire in the counting function.
+9. Physically confirm the production camera mount is directly overhead.
+10. Open decisions: trigger for the "captured" audio cue (button vs. count
+    stabilizing); microphone needed or not.
+11. Housekeeping: delete `data/dataset/import_new/`.
+
+Deprioritized on purpose: tilted-bottle robustness (staff keep bottles
+upright — see "Second photo batch").
